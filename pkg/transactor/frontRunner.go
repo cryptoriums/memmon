@@ -25,11 +25,17 @@ type FrontRunner struct {
 }
 
 func (f FrontRunner) Transact(ctx context.Context, nonce string, reqIds [5]*big.Int, reqVals [5]*big.Int) (*types.Transaction, *types.Receipt, error) {
-	if f.currentTx != nil {
-		// TODO: What is the best logic here?
-	}
-	f.currentTx, f.closeCurrentTx = context.WithCancel(ctx)
-	// Call Transact on actual Transactor.
+	// Only when when this is called should start listening for events.
+	// No need to listen all the time since the 5th slot takes some time before it is profitable.
+	// Use a ticker to check the price. When no tx arrives to front run submit when the profit is 50%
+	// When a tx arrives always front run when it will not cause a loss.
+	//  Later will also add logic to cancel a tx when it will cause a loss or when the other wallet cancels his tx. I have noticed that he sometimes submits another transaction to cancel it.
+
+	// if f.currentTx != nil {
+	// 	// TODO: What is the best logic here?
+	// }
+	// f.currentTx, f.closeCurrentTx = context.WithCancel(ctx)
+	// // Call Transact on actual Transactor.
 	return f.f(ctx, nonce, reqIds, reqVals)
 }
 
