@@ -3,7 +3,6 @@ package transactor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"os"
 	"time"
@@ -47,14 +46,44 @@ func New(ctx context.Context, logger log.Logger) (*FrontRunner, error) {
 }
 
 func (self *FrontRunner) Transact(ctx context.Context, nonce string, reqIds [5]*big.Int, reqVals [5]*big.Int) (*types.Transaction, *types.Receipt, error) {
-	ticker := time.NewTicker(1 * time.Second)
-
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, nil, errors.New("context canceled")
-		default:
-			tx, err := self.mempMon.Read()
+		case tx := <-self.WaitTx(ctx):
+			// submit tr with gas higher then the existing tx.
+			// Check that we are not trying to front run ourselves.
+			self.transact()
+		case <-self.WaitProfitThreshold(ctx):
+			// No other tx has been submitted, but profit is too high to miss so submit anyway.
+			self.transact()
+			continue
+			// Continue monitoring the mempool and if someone else tries to front run us increase the gas price and submit with the same nonce.
+
+		}
+	}
+	// Later will also add logic to cancel a tx when it will cause a loss or when the other wallet cancels his tx.
+	// I have noticed that the other wallet sometimes submits another transaction to cancel it.
+	return nil, nil, nil
+}
+
+// submit only if this will not cause a loss.
+// if submit will cause a loss just return an error so that the caller can decide how to handle.
+func (self *FrontRunner) transact() {
+
+}
+
+func (self *FrontRunner) WaitTx(ctx context.Context) chan *blocknative.Message {
+	ch := make(chan *blocknative.Message)
+	go func(mempMon *blocknative.Mempool, ctx context.Context) {
+		ticker := time.NewTicker(1 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			tx, err := mempMon.Read()
 			if err != nil {
 				level.Error(self.logger).Log("msg", "read mempool tx", "err", err)
 				err = self.mempMon.Subscribe(ctx, common.HexToAddress(telliotCfg.TellorAddress), "submitMiningSolution")
@@ -64,18 +93,13 @@ func (self *FrontRunner) Transact(ctx context.Context, nonce string, reqIds [5]*
 					continue
 				}
 			}
-
-			fmt.Printf("tx: %v \n", tx)
-
+			ch <- tx
 		}
-	}
-	// Use a ticker to check the price. When no tx arrives to front run submit when the profit is 50%
-	// When a tx arrives always front run when it will not cause a loss.
-	//  Later will also add logic to cancel a tx when it will cause a loss or when the other wallet cancels his tx. I have noticed that he sometimes submits another transaction to cancel it.
-	return nil, nil, nil
+	}(self.mempMon, ctx)
+	return ch
 }
 
-func (self FrontRunner) Close() {
+func (self *FrontRunner) Close() {
 	self.mempMon.Close()
 }
 
